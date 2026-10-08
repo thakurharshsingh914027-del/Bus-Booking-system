@@ -1,0 +1,58 @@
+const express = require('express');
+const router = express.Router();
+const { getCustomerProfile, updateCustomerProfile, changeUserLoginId, changeUserPassword, registerPushToken } = require('../controllers/userController');
+const {
+  getServicesStatus,
+  getBuses,
+  getBusDetails,
+  getEvSewa,
+  getEvSewaDetails,
+  getCars,
+  getCarDetails,
+  createBooking,
+  processPayment,
+  getMyBookings,
+  getBookingDetails,
+  cancelBooking,
+  getNotifications,
+  getInsuranceInfo,
+  getSupportInfo,
+  getPolicies
+} = require('../controllers/customerController');
+const { verifyToken } = require('../middleware/auth');
+const { handleProfileImageUpload } = require('../middleware/upload');
+const { getActiveSchedules } = require('../controllers/workflowController');
+
+// Public endpoints
+router.get('/services', getServicesStatus);
+router.get('/schedules', getActiveSchedules);
+router.get('/buses', getBuses);
+router.get('/buses/:id', getBusDetails);
+router.get('/ev-sewa', getEvSewa);
+router.get('/ev-sewa/:id', getEvSewaDetails);
+router.get('/cars', getCars);
+router.get('/cars/:id', getCarDetails);
+router.get('/support', getSupportInfo);
+router.get('/policies', getPolicies);
+const { getBusOffer } = require('../controllers/settingsController');
+const { getActiveBanners } = require('../controllers/bannerController');
+router.get('/bus-offer', getBusOffer);
+router.get('/banners', getActiveBanners);
+router.get('/banners/active', getActiveBanners);
+
+// Protected customer endpoints
+router.use(verifyToken);
+router.get('/profile', getCustomerProfile);
+router.put('/profile', handleProfileImageUpload, updateCustomerProfile);
+router.put('/account/login-id', changeUserLoginId);
+router.put('/account/password', changeUserPassword);
+router.post('/push-token', registerPushToken);
+router.post('/bookings', createBooking);
+router.post('/payments/process', processPayment);
+router.get('/my-bookings', getMyBookings);
+router.get('/bookings/:id', getBookingDetails);
+router.post('/bookings/:id/cancel', cancelBooking);
+router.get('/notifications', getNotifications);
+router.get('/insurance', getInsuranceInfo);
+
+module.exports = router;

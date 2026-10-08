@@ -1,0 +1,22 @@
+{
+  "freshBookingCreated": "PASS",
+  "bookingId": "6ab1ff5fbaa96748cc3da9a8",
+  "customerUpcoming": "PASS",
+  "backendPendingApiContainsNewBooking": "PASS",
+  "harshPendingRequest": "PASS",
+  "ayushPendingRequest": "PASS",
+  "pintuPendingRequest": "PASS",
+  "dashboardCountMatchesRequestList": "PASS",
+  "notification": "PASS",
+  "notificationOpensCorrectBooking": "PASS",
+  "pullToRefresh": "PASS",
+  "appRestartPersistence": "PASS",
+  "otpConfirmation": "PASS",
+  "oldRequestRemovedAfterConfirmation": "PASS",
+  "cashRemainsAwaitingCashCollection": "PASS",
+  "noDuplicateBooking": "PASS",
+  "productionRender": "PASS",
+  "mongoDBConsistency": "PASS",
+  "liveEmulatorUI": "PASS",
+  "finalResult": "PASS"
+}

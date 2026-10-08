@@ -1,0 +1,258 @@
+import React, { useState } from 'react';
+import { adminService } from '../services/adminService';
+
+const PERMISSION_GROUPS = [
+  { name: 'Driver', prefix: 'driver.' },
+  { name: 'Customer', prefix: 'customer.' },
+  { name: 'Vehicle', prefix: 'vehicle.' },
+  { name: 'Booking', prefix: 'booking.' },
+  { name: 'Payment', prefix: 'payment.' },
+  { name: 'Withdrawal', prefix: 'withdrawal.' },
+  { name: 'Cancellation', prefix: 'cancellation.' },
+  { name: 'Notification', prefix: 'notification.' },
+  { name: 'Support', prefix: 'support.' },
+  { name: 'Reports', prefix: 'report.' },
+  { name: 'Admin', prefix: 'admin.' }
+];
+
+const permissionKey = (permission) => {
+  if (typeof permission === 'string') return permission;
+  if (permission && typeof permission === 'object') {
+    if (typeof permission.key === 'string') return permission.key;
+    if (typeof permission.name === 'string') return permission.name;
+    if (typeof permission.label === 'string') return permission.label;
+  }
+  return null;
+};
+
+const getErrorMessage = (error) => {
+  const data = error?.response?.data;
+  if (typeof data === 'string') return data;
+  if (typeof data?.message === 'string') return data.message;
+  if (typeof data?.error === 'string') return data.error;
+  if (typeof error?.message === 'string') return error.message;
+  return 'Something went wrong';
+};
+
+/**
+ * SubAdminFormModal – Handles both create and edit of a Sub‑Admin.
+ * Props:
+ *   onClose: () => void – closes the modal
+ *   editingSubAdmin: object | null – if provided, modal works in edit mode
+ *   permissionTemplates: object – { templates: {...}, allPermissions: [...] }
+ *   allPermissions: array – flat list of all permission strings (fallback)
+ */
+const SubAdminFormModal = ({
+  onClose,
+  editingSubAdmin,
+  permissionTemplates,
+  allPermissions,
+  canEditProfile = true,
+  canEditPermissions = true
+}) => {
+  const isEdit = !!editingSubAdmin;
+  const [name, setName] = useState(editingSubAdmin?.name || '');
+  const [email, setEmail] = useState(editingSubAdmin?.email || '');
+  const [phone, setPhone] = useState(editingSubAdmin?.phone || '');
+  const [password, setPassword] = useState('');
+  const [adminType, setAdminType] = useState(editingSubAdmin?.adminType || 'custom');
+  const [selectedPermissions, setSelectedPermissions] = useState(editingSubAdmin?.permissions || []);
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setErrorMessage('');
+    try {
+      let response;
+      if (isEdit) {
+        if (canEditProfile) {
+          const profilePayload = { name, email, phone };
+          if (password) profilePayload.password = password;
+          response = await adminService.updateSubAdmin(editingSubAdmin._id, profilePayload);
+        }
+        if (canEditPermissions) {
+          response = await adminService.updateSubAdminPermissions(editingSubAdmin._id, {
+            adminType,
+            permissions: adminType === 'custom' ? selectedPermissions : undefined
+          });
+        }
+      } else {
+        response = await adminService.createSubAdmin({
+          name,
+          email,
+          phone,
+          password,
+          adminType,
+          permissions: adminType === 'custom' ? selectedPermissions : undefined
+        });
+      }
+      onClose(response?.message);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const togglePermission = (perm) => {
+    setSelectedPermissions((prev) =>
+      prev.includes(perm) ? prev.filter((p) => p !== perm) : [...prev, perm]
+    );
+  };
+
+  const renderPermissionList = () => {
+    const permissions = adminType === 'custom'
+      ? (allPermissions || []).map(permissionKey).filter(Boolean)
+      : [];
+    const groupedPermissions = PERMISSION_GROUPS.map(group => ({
+      ...group,
+      permissions: permissions.filter(permission => permission.startsWith(group.prefix))
+    })).filter(group => group.permissions.length > 0);
+    const groupedValues = new Set(groupedPermissions.flatMap(group => group.permissions));
+    const otherPermissions = permissions.filter(permission => !groupedValues.has(permission));
+    const groups = otherPermissions.length
+      ? [...groupedPermissions, { name: 'Other', permissions: otherPermissions }]
+      : groupedPermissions;
+
+    return (
+      <div className="subadmin-permission-grid">
+        {groups.map(group => (
+          <section className="subadmin-permission-group" key={group.name}>
+            <h3 className="subadmin-permission-group-title">{group.name}</h3>
+            <div className="subadmin-permission-options">
+              {group.permissions.map((perm) => (
+                <label key={perm} className="subadmin-permission-option">
+                  <input
+                    type="checkbox"
+                    checked={selectedPermissions.includes(perm)}
+                    onChange={() => togglePermission(perm)}
+                    disabled={isEdit && !canEditPermissions}
+                  />
+                  <span>{perm}</span>
+                </label>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="subadmin-modal-overlay" role="presentation">
+      <div className="subadmin-modal content-card" role="dialog" aria-modal="true" aria-labelledby="subadmin-form-title">
+        <div className="card-header-flex subadmin-modal-header">
+          <div>
+            <p className="subadmin-eyebrow">Access control</p>
+            <h2 id="subadmin-form-title" className="card-title subadmin-modal-title">
+              {isEdit ? 'Edit Sub-Admin' : 'Create Sub-Admin'}
+            </h2>
+          </div>
+        </div>
+        <form onSubmit={handleSubmit}>
+          {errorMessage && (
+            <div className="subadmin-form-error" role="alert">
+              {errorMessage}
+            </div>
+          )}
+          <div className="subadmin-form-grid">
+            <div className="subadmin-field">
+              <label htmlFor="subadmin-name">Full Name</label>
+              <input
+                id="subadmin-name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                className="form-control"
+                disabled={isEdit && !canEditProfile}
+              />
+            </div>
+            <div className="subadmin-field">
+              <label htmlFor="subadmin-email">Email</label>
+              <input
+                id="subadmin-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="form-control"
+                disabled={isEdit && !canEditProfile}
+              />
+            </div>
+            <div className="subadmin-field">
+              <label htmlFor="subadmin-phone">Mobile Number</label>
+              <input
+                id="subadmin-phone"
+                type="text"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="form-control"
+                disabled={isEdit && !canEditProfile}
+              />
+            </div>
+            {(!isEdit || canEditProfile) && (
+              <div className="subadmin-field">
+                <label htmlFor="subadmin-password">Password</label>
+                <input
+                  id="subadmin-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={isEdit ? 'Enter new password' : ''}
+                  required={!isEdit}
+                  className="form-control"
+                  autoComplete="new-password"
+                />
+              </div>
+            )}
+            <div className="subadmin-field">
+              <label htmlFor="subadmin-role-type">Role Type</label>
+              <select
+                id="subadmin-role-type"
+                value={adminType}
+                onChange={(e) => setAdminType(e.target.value)}
+                className="form-control"
+                disabled={isEdit && !canEditPermissions}
+              >
+                {permissionTemplates?.templates && Object.keys(permissionTemplates.templates).map((key) => (
+                  <option key={key} value={key}>{key.replace('_', ' ')}</option>
+                ))}
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+          </div>
+          {adminType === 'custom' && (
+            <div className="subadmin-permissions">
+              <div className="subadmin-permissions-heading">
+                <div>
+                  <h3>Select Permissions</h3>
+                  <p>Choose the access this admin should have.</p>
+                </div>
+                <span className="subadmin-count-badge">{selectedPermissions.length} selected</span>
+              </div>
+              {renderPermissionList()}
+            </div>
+          )}
+          <div className="subadmin-form-actions">
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn btn-outline"
+              disabled={submitting}
+            >
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={submitting}>
+              {submitting ? 'Saving...' : isEdit ? 'Save Changes' : 'Create'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default SubAdminFormModal;

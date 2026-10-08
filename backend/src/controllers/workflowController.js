@@ -1,0 +1,572 @@
+const mongoose = require('mongoose');
+const Vehicle = require('../models/Vehicle');
+const Schedule = require('../models/Schedule');
+const Booking = require('../models/Booking');
+const Notification = require('../models/Notification');
+const Driver = require('../models/Driver');
+const getDriverVehicleOwnershipQuery = require('../utils/driverVehicleQuery');
+const { validateRoutePricing } = require('../utils/routeFares');
+const { normalizeScheduleTime, validateScheduleTime } = require('../utils/timeFormat');
+
+const notifyDriver = async (driver, title, message, eventType, entityType, entityId) => {
+  if (!driver) return;
+  await Notification.create({
+    title, message,
+    recipient: `Driver: ${driver.name}`,
+    recipientRole: 'driver',
+    recipientId: driver.user || null,
+    eventType,
+    entityType,
+    entityId
+  });
+};
+
+const notifyAdmins = async (title, message, eventType, entityType, entityId) => {
+  await Notification.create({
+    title, message, recipient: 'All Admins', recipientRole: 'admin',
+    eventType, entityType, entityId
+  });
+};
+
+const driverId = req => req.driver && req.driver._id;
+const isMissingNumericValue = value => value == null || (typeof value === 'string' && value.trim() === '');
+const ACTIVE_BOOKING_STATUSES = [
+  'Pending Admin Confirmation',
+  'PENDING_ADMIN_CONFIRMATION',
+  'Admin Confirmed',
+  'ADMIN_CONFIRMED',
+  'Pending',
+  'Pending Driver Confirmation',
+  'Confirmed',
+  'In Transit',
+  'Active',
+  'Pending Cash',
+  'Awaiting Cash Collection',
+  'Ongoing'
+];
+const ACTIVE_RIDE_STATUSES = ['Accepted', 'Arrived', 'Started'];
+
+const getActiveVehicleBookingQuery = (vehicleId, startOfToday) => ({
+  vehicle: vehicleId,
+  $or: [
+    {
+      bookingStatus: { $in: ACTIVE_BOOKING_STATUSES },
+      travelDate: { $gte: startOfToday }
+    },
+    {
+      rideStatus: { $in: ACTIVE_RIDE_STATUSES },
+      bookingStatus: { $nin: ['Completed', 'Cancelled', 'Rejected'] }
+    }
+  ]
+});
+
+exports.registerVehicle = async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    if (!body.vehicleNumber || !body.vehicleType) {
+      return res.status(400).json({ success: false, message: 'vehicleNumber and vehicleType are required' });
+    }
+    if (body.vehicleType === 'EV-Sewa') {
+      const batteryCapacity = Number(body.evDetails && body.evDetails.batteryCapacity);
+      const batteryPercentage = Number(body.evDetails && body.evDetails.batteryPercentage);
+      const rangeKm = Number(body.evDetails && body.evDetails.rangeKm);
+      if (
+        isMissingNumericValue(body.evDetails?.batteryCapacity) ||
+        !Number.isFinite(batteryCapacity) ||
+        batteryCapacity <= 0
+      ) {
+        return res.status(400).json({ success: false, message: 'EV battery capacity must be a valid positive number in kWh' });
+      }
+      if (
+        isMissingNumericValue(body.evDetails?.batteryPercentage) ||
+        !Number.isFinite(batteryPercentage) ||
+        batteryPercentage < 0 ||
+        batteryPercentage > 100
+      ) {
+        return res.status(400).json({ success: false, message: 'EV battery percentage must be between 0 and 100' });
+      }
+      if (
+        isMissingNumericValue(body.evDetails?.rangeKm) ||
+        !Number.isFinite(rangeKm) ||
+        rangeKm < 0
+      ) {
+        return res.status(400).json({ success: false, message: 'EV estimated range must be a valid non-negative number' });
+      }
+      body.evDetails = { ...body.evDetails, batteryCapacity, batteryPercentage, rangeKm };
+    }
+    if (body.vehicleType === 'Car') {
+      // For Car: Route Details and fareRate are completely optional
+      if (body.route) {
+        if (Array.isArray(body.route.stops)) {
+          body.route.stops = body.route.stops
+            .map(stop => {
+              if (typeof stop === 'string') {
+                return stop.trim() ? { name: stop.trim() } : null;
+              }
+              const name = (stop?.name || '').trim();
+              if (!name) return null;
+              const stopObj = { name };
+              if (stop.fareFromOrigin != null && stop.fareFromOrigin !== '' && !isNaN(Number(stop.fareFromOrigin)) && Number(stop.fareFromOrigin) >= 0) {
+                stopObj.fareFromOrigin = Number(stop.fareFromOrigin);
+              }
+              return stopObj;
+            })
+            .filter(Boolean);
+        } else {
+          body.route.stops = [];
+        }
+
+        body.route.origin = (body.route.origin || '').trim();
+        body.route.destination = (body.route.destination || '').trim();
+
+        if (body.route.destinationFareFromOrigin != null && body.route.destinationFareFromOrigin !== '' && !isNaN(Number(body.route.destinationFareFromOrigin)) && Number(body.route.destinationFareFromOrigin) >= 0) {
+          body.route.destinationFareFromOrigin = Number(body.route.destinationFareFromOrigin);
+        } else {
+          delete body.route.destinationFareFromOrigin;
+        }
+
+        if (body.route.stops.length > 0 && body.route.origin && body.route.destination) {
+          try {
+            const routePricing = validateRoutePricing(body.route);
+            if (routePricing.valid && routePricing.totalFare != null) {
+              body.fareRate = routePricing.totalFare;
+            }
+          } catch (e) {
+            // For Car, optional route pricing never blocks registration
+          }
+        }
+      }
+
+      if (body.fareRate != null && body.fareRate !== '') {
+        const parsedFare = Number(body.fareRate);
+        if (Number.isFinite(parsedFare) && parsedFare > 0) {
+          body.fareRate = parsedFare;
+        } else {
+          delete body.fareRate;
+        }
+      } else {
+        delete body.fareRate;
+      }
+    } else {
+      if (body.route?.stops?.length) {
+        const routePricing = validateRoutePricing(body.route);
+        if (!routePricing.valid) {
+          return res.status(400).json({ success: false, message: routePricing.message });
+        }
+        body.fareRate = routePricing.totalFare;
+      } else if (body.fareRate != null && (
+        !Number.isFinite(Number(body.fareRate)) ||
+        Number(body.fareRate) <= 0
+      )) {
+        return res.status(400).json({ success: false, message: 'A positive full-route fare is required when route stops are not configured.' });
+      }
+    }
+    const vehicleNumber = String(body.vehicleNumber).trim().toUpperCase();
+    if (await Vehicle.exists({ vehicleNumber })) {
+      return res.status(409).json({ success: false, message: 'Vehicle with this number already exists' });
+    }
+    const vehicle = await Vehicle.create({
+      ...body,
+      vehicleNumber,
+      vehicleCategory: body.vehicleCategory || 'Driver Submitted Vehicle',
+      vehicleModel: body.vehicleModel || 'Driver Submitted Model',
+      vehicleName: body.vehicleName || vehicleNumber,
+      ownerName: body.ownerName || req.driver.name,
+      ownerMobileNumber: body.ownerMobileNumber || req.driver.mobileNumber,
+      vehicleImages: Array.isArray(body.vehicleImages) ? body.vehicleImages.slice(0, 5) : [],
+      vehicleStatus: 'Pending',
+      assignedDriver: req.driver._id,
+      submission: { submittedByDriver: req.driver._id }
+    });
+    await notifyAdmins(
+      'Vehicle approval required',
+      `${req.driver.name} submitted vehicle ${vehicle.vehicleNumber} for approval.`,
+      'VEHICLE_SUBMITTED', 'Vehicle', vehicle._id
+    );
+    res.status(201).json({ success: true, data: vehicle, message: 'Vehicle submitted for approval' });
+  } catch (error) { next(error); }
+};
+
+exports.getDriverVehicles = async (req, res, next) => {
+  try {
+    const data = await Vehicle.find(getDriverVehicleOwnershipQuery(req.driver)).sort({ createdAt: -1 }).lean();
+    res.json({ success: true, count: data.length, data });
+  } catch (error) { next(error); }
+};
+
+exports.deleteDriverVehicle = async (req, res, next) => {
+  try {
+    const { vehicleId } = req.params;
+    if (!mongoose.isValidObjectId(vehicleId)) {
+      return res.status(400).json({ success: false, message: 'Invalid vehicleId' });
+    }
+
+    const vehicle = await Vehicle.findOne({
+      _id: vehicleId,
+      ...getDriverVehicleOwnershipQuery(req.driver)
+    });
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found or you are not authorized to remove it.' });
+    }
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const [activeSchedule, activeBooking] = await Promise.all([
+      Schedule.exists({
+        vehicle: vehicle._id,
+        status: 'Active',
+        travelDate: { $gte: startOfToday }
+      }),
+      Booking.exists(getActiveVehicleBookingQuery(vehicle._id, startOfToday))
+    ]);
+    if (activeSchedule || activeBooking) {
+      return res.status(400).json({
+        success: false,
+        message: 'This vehicle cannot be removed because it is currently in use.'
+      });
+    }
+
+    await Vehicle.deleteOne({ _id: vehicle._id });
+    await Promise.all([
+      Driver.updateMany({ assignedVehicle: vehicle._id }, { $set: { assignedVehicle: null } }),
+      Schedule.deleteMany({ vehicle: vehicle._id, status: { $in: ['Pending', 'Rejected', 'Cancelled'] } })
+    ]);
+    res.json({ success: true, message: 'Vehicle removed successfully.' });
+  } catch (error) { next(error); }
+};
+
+exports.updateDriverVehicleEVDetails = async (req, res, next) => {
+  try {
+    const { vehicleId } = req.params;
+    const { batteryPercentage, estimatedRangeKm } = req.body || {};
+    if (!mongoose.isValidObjectId(vehicleId)) {
+      return res.status(400).json({ success: false, message: 'Invalid vehicleId' });
+    }
+
+    const battery = Number(batteryPercentage);
+    const rangeKm = Number(estimatedRangeKm);
+    if (
+      isMissingNumericValue(batteryPercentage) ||
+      !Number.isFinite(battery) ||
+      battery < 0 ||
+      battery > 100
+    ) {
+      return res.status(400).json({ success: false, message: 'EV battery percentage must be between 0 and 100' });
+    }
+    if (
+      isMissingNumericValue(estimatedRangeKm) ||
+      !Number.isFinite(rangeKm) ||
+      rangeKm <= 0
+    ) {
+      return res.status(400).json({ success: false, message: 'EV estimated range must be a valid positive number' });
+    }
+
+    const vehicle = await Vehicle.findOne({
+      _id: vehicleId,
+      vehicleType: 'EV-Sewa',
+      ...getDriverVehicleOwnershipQuery(req.driver)
+    });
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'EV vehicle not found or you are not authorized to edit it' });
+    }
+
+    vehicle.set('evDetails.batteryPercentage', battery);
+    vehicle.set('evDetails.rangeKm', rangeKm);
+    await vehicle.save();
+    res.json({ success: true, data: vehicle, message: 'EV battery and range updated successfully' });
+  } catch (error) { next(error); }
+};
+
+exports.createSchedule = async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    if (!body.vehicle || !body.origin || !body.destination || !body.travelDate || !body.departureTime) {
+      return res.status(400).json({ success: false, message: 'vehicle, origin, destination, travelDate, and departureTime are required' });
+    }
+
+    const departureTime = normalizeScheduleTime(body.departureTime);
+    const arrivalTime = body.arrivalTime ? normalizeScheduleTime(body.arrivalTime) : '';
+    if (!validateScheduleTime(departureTime)) {
+      return res.status(400).json({ success: false, message: 'departureTime must be a valid time (e.g. 06:00 PM)' });
+    }
+    if (arrivalTime && !validateScheduleTime(arrivalTime)) {
+      return res.status(400).json({ success: false, message: 'arrivalTime must be a valid time (e.g. 11:00 PM)' });
+    }
+
+    const vehicle = await Vehicle.findOne({ _id: body.vehicle, assignedDriver: req.driver._id });
+    if (!vehicle) return res.status(404).json({ success: false, message: 'Vehicle is not assigned to this driver' });
+    if (vehicle.vehicleStatus !== 'Active') {
+      return res.status(400).json({ success: false, message: 'Only an active vehicle can have a schedule' });
+    }
+
+    const startOfDay = new Date(body.travelDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(body.travelDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const duplicate = await Schedule.findOne({
+      vehicle: vehicle._id,
+      departureTime,
+      travelDate: { $gte: startOfDay, $lte: endOfDay }
+    });
+
+    if (duplicate) {
+      return res.status(409).json({ success: false, message: 'A schedule for this vehicle on this date and time already exists.' });
+    }
+
+    const schedule = await Schedule.create({
+      ...body,
+      departureTime,
+      arrivalTime,
+      driver: req.driver._id,
+      status: 'Pending',
+      fareRate: Number(body.fareRate) || vehicle.fareRate || 0
+    });
+    await notifyAdmins(
+      'Schedule approval required',
+      `${req.driver.name} submitted ${schedule.origin} → ${schedule.destination} for approval.`,
+      'SCHEDULE_SUBMITTED', 'Schedule', schedule._id
+    );
+    res.status(201).json({ success: true, data: schedule, message: 'Schedule submitted for approval' });
+  } catch (error) { next(error); }
+};
+
+exports.getDriverSchedules = async (req, res, next) => {
+  try {
+    const data = await Schedule.find({ driver: driverId(req) }).populate('vehicle').sort({ travelDate: 1 }).lean();
+    res.json({ success: true, count: data.length, data });
+  } catch (error) { next(error); }
+};
+
+exports.deleteDriverSchedule = async (req, res, next) => {
+  try {
+    const { scheduleId } = req.params;
+    if (!mongoose.isValidObjectId(scheduleId)) {
+      return res.status(400).json({ success: false, message: 'Invalid scheduleId' });
+    }
+
+    const schedule = await Schedule.findOne({ _id: scheduleId, driver: req.driver._id });
+    if (!schedule) {
+      return res.status(404).json({ success: false, message: 'Schedule not found or you are not authorized to remove it.' });
+    }
+
+    const scheduleDate = new Date(schedule.travelDate);
+    const startOfDay = new Date(scheduleDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(scheduleDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    const activeBooking = await Booking.exists({
+      $and: [
+        {
+          $or: [
+            { scheduleId: schedule._id },
+            { vehicle: schedule.vehicle, travelDate: { $gte: startOfDay, $lte: endOfDay } }
+          ]
+        },
+        {
+          $or: [
+            { bookingStatus: { $in: ACTIVE_BOOKING_STATUSES } },
+            { rideStatus: { $in: ['Accepted', 'Arrived', 'Started'] } }
+          ]
+        }
+      ]
+    });
+    if (activeBooking) {
+      return res.status(400).json({
+        success: false,
+        message: 'This schedule cannot be removed because it has an active booking.'
+      });
+    }
+
+    await Schedule.deleteOne({ _id: schedule._id, driver: req.driver._id });
+    res.json({ success: true, message: 'Schedule removed successfully.' });
+  } catch (error) { next(error); }
+};
+
+exports.getActiveSchedules = async (req, res, next) => {
+  try {
+    const { from, to, travelDate } = req.query;
+    const filter = { status: 'Active' };
+
+    if (travelDate) {
+      const startOfDay = new Date(travelDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(travelDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      filter.travelDate = { $gte: startOfDay, $lte: endOfDay };
+    }
+
+    let data = await Schedule.find(filter).populate({
+      path: 'vehicle', match: { vehicleStatus: 'Active' }, populate: { path: 'assignedDriver' }
+    }).sort({ travelDate: 1, departureTime: 1 }).lean();
+    if (from || to) {
+      const { isRouteSegmentWithin, normalizeLocation } = require('../utils/routeFares');
+      data = data.filter(schedule => {
+        if (!schedule.vehicle) return false;
+        const route = schedule.vehicle.route;
+        if (Array.isArray(route?.stops) && route.stops.length > 0) {
+          return isRouteSegmentWithin(route, schedule.origin, schedule.destination, from || schedule.origin, to || schedule.destination);
+        }
+        const originMatches = !from || normalizeLocation(schedule.origin).includes(normalizeLocation(from));
+        const destinationMatches = !to || normalizeLocation(schedule.destination).includes(normalizeLocation(to));
+        return originMatches && destinationMatches;
+      });
+    }
+    res.json({ success: true, count: data.filter(s => s.vehicle).length, data: data.filter(s => s.vehicle) });
+  } catch (error) { next(error); }
+};
+
+const review = (kind, status) => async (req, res, next) => {
+  try {
+    const Model = kind === 'vehicle' ? Vehicle : Schedule;
+    const doc = await Model.findById(req.params.id).populate(kind === 'vehicle' ? 'submission.submittedByDriver' : 'driver');
+    if (!doc) return res.status(404).json({ success: false, message: `${kind} not found` });
+    const reason = req.body && (req.body.reason || req.body.rejectionReason) || '';
+    if (kind === 'vehicle') {
+      if (doc.pendingRoute && doc.pendingRoute.origin) {
+        if (status === 'Active') {
+          doc.route = doc.route || {};
+          doc.route.origin = doc.pendingRoute.origin;
+          doc.route.destination = doc.pendingRoute.destination;
+          doc.route.stops = doc.pendingRoute.stops || [];
+          doc.routeApprovalStatus = 'Approved';
+          doc.pendingRoute = undefined;
+          if (doc.vehicleStatus !== 'Active') {
+            doc.vehicleStatus = 'Active';
+          }
+        } else if (status === 'Rejected') {
+          doc.routeApprovalStatus = 'Rejected';
+          doc.pendingRoute = undefined;
+        }
+      } else {
+        doc.vehicleStatus = status;
+        if (status === 'Active') {
+          doc.routeApprovalStatus = 'Approved';
+        } else {
+          doc.routeApprovalStatus = 'Rejected';
+        }
+      }
+      doc.submission.reviewedBy = req.user._id;
+      doc.submission.reviewedAt = new Date();
+      doc.submission.rejectionReason = status === 'Rejected' ? reason : '';
+    } else {
+      doc.status = status;
+      doc.reviewedBy = req.user._id;
+      doc.reviewedAt = new Date();
+      doc.rejectionReason = status === 'Rejected' ? reason : '';
+    }
+    await doc.save();
+    if (kind === 'vehicle' && status === 'Active') {
+      await Driver.findByIdAndUpdate(doc.assignedDriver, { assignedVehicle: doc._id });
+    }
+    if (kind === 'schedule' && status === 'Active') {
+      const vehicleUpdate = {};
+      if (doc.departureTime) vehicleUpdate['route.departureTime'] = doc.departureTime;
+      if (doc.arrivalTime) vehicleUpdate['route.arrivalTime'] = doc.arrivalTime;
+      if (doc.origin) vehicleUpdate['route.origin'] = doc.origin;
+      if (doc.destination) vehicleUpdate['route.destination'] = doc.destination;
+      if (doc.fareRate) vehicleUpdate['fareRate'] = doc.fareRate;
+      await Vehicle.findByIdAndUpdate(doc.vehicle, vehicleUpdate);
+    }
+    const driver = kind === 'vehicle' ? doc.submission.submittedByDriver : doc.driver;
+    const eventType = `${kind.toUpperCase()}_${status === 'Active' ? 'APPROVED' : 'REJECTED'}`;
+    await notifyDriver(
+      driver,
+      `${kind} ${status.toLowerCase()}`,
+      status === 'Rejected' ? `Rejected: ${reason}` : `Your ${kind} was approved.`,
+      eventType,
+      kind === 'vehicle' ? 'Vehicle' : 'Schedule',
+      doc._id
+    );
+    res.json({ success: true, data: doc, message: `${kind} ${status.toLowerCase()}` });
+  } catch (error) { next(error); }
+};
+
+exports.getPendingVehicles = async (req, res, next) => {
+  try {
+    const data = await Vehicle.find({
+      $or: [
+        { vehicleStatus: 'Pending' },
+        { routeApprovalStatus: 'Pending Approval' }
+      ]
+    }).populate('assignedDriver').sort({ createdAt: 1 });
+    res.json({ success: true, count: data.length, data });
+  } catch (e) { next(e); }
+};
+exports.getPendingSchedules = async (req, res, next) => {
+  req.query.status = 'Pending';
+  return exports.getAdminSchedules(req, res, next);
+};
+exports.getAdminSchedules = async (req, res, next) => {
+  try {
+    const status = req.query.status || 'Pending';
+    if (!['Pending', 'Active', 'Rejected'].includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid schedule status' });
+    }
+    const data = await Schedule.find({ status })
+      .select('vehicle driver origin destination travelDate departureTime arrivalTime fareRate notes status rejectionReason createdAt updatedAt')
+      .populate('vehicle', 'vehicleNumber vehicleName vehicleType vehicleStatus seatingCapacity')
+      .populate('driver', 'name mobileNumber driverStatus')
+      .sort({ createdAt: 1 })
+      .lean();
+    res.json({ success: true, count: data.length, data });
+  } catch (e) { next(e); }
+};
+exports.approveVehicle = review('vehicle', 'Active');
+exports.rejectVehicle = review('vehicle', 'Rejected');
+exports.approveSchedule = review('schedule', 'Active');
+exports.rejectSchedule = review('schedule', 'Rejected');
+
+/**
+ * PATCH /api/driver/vehicles/:vehicleId/route-status
+ * Toggle routeActive on/off for the authenticated driver's Car vehicle.
+ * Only the assigned driver may change this. Bus/EV-Sewa vehicles are not affected
+ * by this flag but we still persist it for consistency.
+ */
+exports.updateVehicleRouteStatus = async (req, res, next) => {
+  try {
+    const { vehicleId } = req.params;
+    const { routeActive } = req.body;
+
+    if (typeof routeActive !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'routeActive must be a boolean (true or false)' });
+    }
+
+    const Vehicle = require('../models/Vehicle');
+    const Driver = require('../models/Driver');
+
+    // Identify the requesting driver
+    const driver = await Driver.findOne({ user: req.user._id }).lean();
+    if (!driver) {
+      return res.status(403).json({ success: false, message: 'Driver profile not found' });
+    }
+
+    const vehicle = await Vehicle.findById(vehicleId);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found' });
+    }
+
+    // Authorization: vehicle must be assigned to this driver OR driver submitted it
+    const isAssigned = vehicle.assignedDriver && String(vehicle.assignedDriver) === String(driver._id);
+    const isSubmitter = vehicle.submission?.submittedByDriver && String(vehicle.submission.submittedByDriver) === String(driver._id);
+    if (!isAssigned && !isSubmitter) {
+      return res.status(403).json({ success: false, message: 'Not authorized to change this vehicle\'s route status' });
+    }
+
+    vehicle.routeActive = routeActive;
+    await vehicle.save();
+
+    return res.json({
+      success: true,
+      message: `Route status set to ${routeActive ? 'ACTIVE (ON)' : 'INACTIVE (OFF)'}`,
+      data: {
+        _id: vehicle._id,
+        vehicleNumber: vehicle.vehicleNumber,
+        vehicleType: vehicle.vehicleType,
+        routeActive: vehicle.routeActive
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+};

@@ -1,0 +1,123 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAdminAuth } from '../context/AdminAuthContext';
+import { LogIn, AlertCircle } from 'lucide-react';
+
+const AdminLogin = () => {
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const { login } = useAdminAuth();
+  const navigate = useNavigate();
+
+  const handleSubmit = async e => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    const res = await login(identifier, password);
+    setLoading(false);
+
+    if (res.success) {
+      navigate('/dashboard');
+    } else {
+      setError(res.message);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        backgroundColor: '#090d16',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px'
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '440px',
+          backgroundColor: '#ffffff',
+          borderRadius: '12px',
+          padding: '36px 32px',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)'
+        }}
+      >
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+          <img
+            src="/logo.png"
+            alt="YatraSewanp.com"
+            style={{ width: '54px', height: '54px', borderRadius: '12px', objectFit: 'contain', marginBottom: '12px' }}
+          />
+          <h2 style={{ fontSize: '1.4rem', fontWeight: '800', color: '#0f172a' }}>YatraSewanp.com</h2>
+          <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '4px' }}>
+            Your Travel Partner in Nepal · Super Admin Portal
+          </p>
+        </div>
+
+        {error && (
+          <div
+            style={{
+              backgroundColor: '#fef2f2',
+              border: '1px solid #fecaca',
+              color: '#dc2626',
+              padding: '10px 14px',
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              marginBottom: '20px'
+            }}
+          >
+            <AlertCircle size={16} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label className="form-label">Super Admin Email / Phone</label>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Enter email or mobile number"
+              value={identifier}
+              onChange={e => setIdentifier(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="form-group" style={{ marginBottom: '24px' }}>
+            <label className="form-label">Admin Security Password</label>
+            <input
+              type="password"
+              className="form-control"
+              placeholder="Enter password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              required
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="btn btn-primary"
+            style={{ width: '100%', justifyContent: 'center', padding: '12px', backgroundColor: '#0f172a' }}
+            disabled={loading}
+          >
+            <LogIn size={18} />
+            <span>{loading ? 'Verifying Super Admin...' : 'Authenticate Super Admin'}</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default AdminLogin;

@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "YatraSewanp.com",
+    "slug": "travelease-customer-app",
+    "scheme": "com.travelease.customer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.travelease.customer"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

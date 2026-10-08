@@ -1,0 +1,1 @@
+const axios = require('axios'); const FormData = require('form-data'); const form = new FormData(); form.append('test', '123'); axios.post('http://localhost:5000/api/driver/vehicle-images', form, { headers: { 'Content-Type': 'application/json' } }).then(r => console.log(r.data)).catch(e => console.error(e.response ? e.response.data : e.message));

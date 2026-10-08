@@ -1,0 +1,319 @@
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { useAdminAuth } from '../context/AdminAuthContext';
+import { adminService } from '../services/adminService';
+import StatCard from '../components/StatCard';
+import StatusBadge from '../components/StatusBadge';
+import {
+  Users,
+  UserCheck,
+  Truck,
+  CalendarCheck,
+  CreditCard,
+  FileCheck2,
+  XOctagon,
+  Percent,
+  ShieldAlert,
+  ArrowRight,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  Sliders
+} from 'lucide-react';
+
+const DashboardStatLink = ({ to, children }) => (
+  <Link to={to} style={{ display: 'block', color: 'inherit', textDecoration: 'none', cursor: 'pointer' }}>
+    {children}
+  </Link>
+);
+
+const Dashboard = () => {
+  const { adminUser, hasPermission, isSuperAdmin } = useAdminAuth();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState(null);
+  const [approvalCounts, setApprovalCounts] = useState(null);
+  const [driverCount, setDriverCount] = useState(0);
+
+  useEffect(() => {
+    const fetchDashboard = async () => {
+      if (!isSuperAdmin()) {
+        try {
+          if (hasPermission('driver.view')) {
+            const res = await adminService.getDrivers();
+            const drivers = Array.isArray(res.data) ? res.data : Array.isArray(res) ? res : [];
+            setDriverCount(drivers.length);
+          }
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
+      setDashboardError(null);
+      try {
+        const [res, pendingVehicles, pendingSchedules] = await Promise.all([
+          adminService.getDashboard(),
+          adminService.getPendingVehicles(),
+          adminService.getPendingSchedules()
+        ]);
+        const countKeys = [
+          'customers',
+          'drivers',
+          'vehicles',
+          'activeVehicles',
+          'inactiveVehicles',
+          'blockedVehicles',
+          'bookings',
+          'totalPaymentsAmount',
+          'pendingDriverVerification',
+          'pendingDocuments',
+          'cancellationRecords',
+          'accidentInsuranceRecords'
+        ];
+        if (
+          !res?.success ||
+          !res.data?.counts ||
+          countKeys.some(key => !Number.isFinite(res.data.counts[key])) ||
+          !pendingVehicles?.success ||
+          !Array.isArray(pendingVehicles.data) ||
+          !pendingSchedules?.success ||
+          !Array.isArray(pendingSchedules.data)
+        ) {
+          throw new Error('Dashboard metrics response was incomplete.');
+        }
+
+        setData(res.data);
+        setApprovalCounts({
+          vehicles: pendingVehicles.data.length,
+          schedules: pendingSchedules.data.length
+        });
+      } catch (err) {
+        console.error(err);
+        setDashboardError(err?.response?.data?.message || err.message || 'Unable to load dashboard metrics.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDashboard();
+  }, [adminUser]);
+
+  if (loading) {
+    return <div style={{ padding: '24px', color: '#64748b' }}>Loading admin metrics...</div>;
+  }
+
+  if (!isSuperAdmin()) {
+    return (
+      <div>
+        <section className="content-card">
+          <h1 className="card-title">Welcome, {adminUser?.name || 'Admin'}</h1>
+          <p style={{ marginTop: 6, color: '#64748b' }}>
+            Your dashboard and available sections are limited to your assigned permissions.
+          </p>
+        </section>
+        {hasPermission('driver.view') && (
+          <div className="stats-grid">
+            <StatCard title="Drivers Available to Manage" value={driverCount} icon={UserCheck} color="#059669" />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (dashboardError || !data || !approvalCounts) {
+    return (
+      <section className="content-card" role="alert">
+        <h1 className="card-title">Unable to Load Dashboard Metrics</h1>
+        <p style={{ marginTop: 6, color: '#64748b' }}>
+          {dashboardError || 'Dashboard metrics are unavailable. Refresh the page to try again.'}
+        </p>
+      </section>
+    );
+  }
+
+  const { counts, serviceControl, recentBookings } = data || {};
+
+  return (
+    <div>
+      {/* Service Control Summary Banner */}
+      <div
+        className="content-card"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '16px',
+          borderLeft: '4px solid var(--primary-blue)'
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <Sliders size={18} color="#1d4ed8" />
+            <h3 style={{ fontSize: '1.05rem', fontWeight: '700' }}>Platform Booking Service Status</h3>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
+            Live status of customer booking pipelines across all 3 modes.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ padding: '6px 14px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}>
+            Bus Booking: <StatusBadge status={serviceControl?.busService || 'Active'} />
+          </div>
+          <div style={{ padding: '6px 14px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}>
+            EV-Sewa: <StatusBadge status={serviceControl?.evSewaService || 'Active'} />
+          </div>
+          <div style={{ padding: '6px 14px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}>
+            Car Booking: <StatusBadge status={serviceControl?.carService || 'Active'} />
+          </div>
+          <Link to="/service-control" className="btn btn-outline" style={{ fontSize: '0.8rem', padding: '6px 12px' }}>
+            Manage Toggles
+          </Link>
+        </div>
+      </div>
+
+      {/* 14 Key Platform Counters Grid */}
+      <div className="stats-grid">
+        <DashboardStatLink to="/vehicle-approval">
+          <StatCard title="Pending Vehicle Approvals" value={approvalCounts.vehicles} icon={Truck} color="#f59e0b" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/schedule-approval">
+          <StatCard title="Pending Schedule Approvals" value={approvalCounts.schedules} icon={CalendarCheck} color="#d97706" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/customers">
+          <StatCard title="Total Customers" value={counts.customers} icon={Users} color="#1d4ed8" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/drivers">
+          <StatCard title="Total Drivers" value={counts.drivers} icon={UserCheck} color="#059669" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/vehicles">
+          <StatCard title="Total Vehicles" value={counts.vehicles} icon={Truck} color="#475569" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/vehicles">
+          <StatCard title="Active Vehicles" value={counts.activeVehicles} icon={CheckCircle2} color="#10b981" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/vehicles">
+          <StatCard title="Inactive Vehicles" value={counts.inactiveVehicles} icon={AlertTriangle} color="#f59e0b" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/vehicles">
+          <StatCard title="Blocked Vehicles" value={counts.blockedVehicles} icon={XCircle} color="#ef4444" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/bookings">
+          <StatCard title="Total Bookings" value={counts.bookings} icon={CalendarCheck} color="#2563eb" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/payments">
+          <StatCard
+            title="Total Payments (₹)"
+            value={`₹${counts.totalPaymentsAmount.toLocaleString('en-IN')}`}
+            icon={CreditCard}
+            color="#10b981"
+          />
+        </DashboardStatLink>
+        <DashboardStatLink to="/driver-verification">
+          <StatCard
+            title="Pending Driver Verification"
+            value={counts.pendingDriverVerification}
+            icon={FileCheck2}
+            color="#f59e0b"
+          />
+        </DashboardStatLink>
+        <DashboardStatLink to="/driver-verification">
+          <StatCard
+            title="Pending Documents"
+            value={counts.pendingDocuments}
+            icon={FileCheck2}
+            color="#d97706"
+          />
+        </DashboardStatLink>
+        <DashboardStatLink to="/cancellations">
+          <StatCard title="Cancellation Records" value={counts.cancellationRecords} icon={XOctagon} color="#ef4444" />
+        </DashboardStatLink>
+        <DashboardStatLink to="/insurance">
+          <StatCard
+            title="Accident Insurance Policies"
+            value={counts.accidentInsuranceRecords}
+            icon={ShieldAlert}
+            color="#0284c7"
+          />
+        </DashboardStatLink>
+      </div>
+
+      {/* Recent Bookings Feed */}
+      <div className="content-card">
+        <div className="card-header-flex">
+          <div>
+            <h3 className="card-title">Recent System Bookings</h3>
+            <p style={{ fontSize: '0.825rem', color: '#64748b', marginTop: '2px' }}>
+              Real-time booking streams across Bus, EV-Sewa, and Car services.
+            </p>
+          </div>
+          <Link to="/bookings" className="btn btn-outline" style={{ fontSize: '0.8rem', padding: '4px 10px' }}>
+            View All Bookings <ArrowRight size={14} />
+          </Link>
+        </div>
+
+        <div className="table-responsive">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Booking ID</th>
+                <th>Service</th>
+                <th>Customer Details</th>
+                <th>Vehicle & Driver</th>
+                <th>Pickup → Drop Route</th>
+                <th>Fare</th>
+                <th>Payment</th>
+                <th>Booking Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentBookings && recentBookings.length > 0 ? (
+                recentBookings.map(b => (
+                  <tr key={b._id}>
+                    <td style={{ fontWeight: '700', color: '#1d4ed8' }}>{b.bookingId}</td>
+                    <td>
+                      <span className="badge badge-pending">{b.serviceType}</span>
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: '600' }}>{b.customer?.name}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{b.customer?.phone}</div>
+                    </td>
+                    <td>
+                      <div>{b.vehicle?.vehicleName || 'Unassigned'}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                        {b.vehicle?.vehicleNumber} • {b.driver?.name || 'No Driver'}
+                      </div>
+                    </td>
+                    <td style={{ fontSize: '0.8rem', maxWidth: '240px' }}>
+                      <div>{b.pickupLocation}</div>
+                      <div style={{ color: '#64748b' }}>↓ {b.dropLocation}</div>
+                    </td>
+                    <td style={{ fontWeight: '700' }}>₹{b.fare}</td>
+                    <td>
+                      <StatusBadge status={b.paymentStatus} />
+                    </td>
+                    <td>
+                      <StatusBadge status={b.bookingStatus} />
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="8" style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>
+                    No bookings logged yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;

@@ -1,0 +1,291 @@
+const Vehicle = require('../models/Vehicle');
+const Booking = require('../models/Booking');
+const Schedule = require('../models/Schedule');
+const Driver = require('../models/Driver');
+const mongoose = require('mongoose');
+const { normalizeScheduleTime } = require('../utils/timeFormat');
+const { isRouteSegmentWithin, normalizeLocation } = require('../utils/routeFares');
+
+const formatVehicle = (vehicleDoc, req) => {
+  const v = vehicleDoc.toObject ? vehicleDoc.toObject() : { ...vehicleDoc };
+  if (Array.isArray(v.vehicleImages) && v.vehicleImages.length > 0) {
+    const host = req ? req.get('host') : null;
+    const protocol = req && req.protocol ? req.protocol : 'http';
+    v.vehicleImages = v.vehicleImages.map(img => {
+      if (img && typeof img === 'string' && img.startsWith('/uploads/') && host) {
+        return `${protocol}://${host}${img}`;
+      }
+      return img;
+    });
+  }
+
+  // Security: Remove internal market hire financial details for non-admin viewers
+  if (v.hireDetails) {
+    delete v.hireDetails.hireAmount;
+    delete v.hireDetails.paidAmount;
+    delete v.hireDetails.paymentReference;
+  }
+
+  return v;
+};
+
+// @desc    Get vehicles with case-insensitive type filter (?type=bus|ev-sewa|car) and search routes
+// @route   GET /api/vehicles
+// @access  Public
+exports.getVehicles = async (req, res, next) => {
+  try {
+    const { type, from, to, travelDate, scheduleId } = req.query;
+    const scheduleBooking = req.query.scheduleBooking === 'true';
+
+    const query = { vehicleStatus: 'Active' };
+
+    if (type) {
+      const clean = type.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (clean === 'bus' || clean === 'buses') {
+        query.vehicleType = 'Bus';
+      } else if (clean === 'evsewa' || clean === 'ev') {
+        query.vehicleType = 'EV-Sewa';
+      } else if (clean === 'car' || clean === 'cars') {
+        query.vehicleType = 'Car';
+      } else if (clean === 'truck' || clean === 'trucks') {
+        query.vehicleType = 'Truck';
+      }
+    }
+
+    if (scheduleBooking && !query.vehicleType) {
+      return res.json({ success: true, count: 0, data: [] });
+    }
+
+    const vehicles = await Vehicle.find(query).populate('assignedDriver').sort({ createdAt: -1 });
+
+    if (scheduleBooking) {
+      if (scheduleId && (!mongoose.isValidObjectId(scheduleId) || query.vehicleType !== 'Car')) {
+        return res.status(400).json({ success: false, message: 'Invalid Car schedule selection' });
+      }
+
+      if (scheduleId && (!from || !to || !travelDate)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Car schedule ID, route, and travel date are required'
+        });
+      }
+      const vehicleIds = vehicles.map(vehicle => vehicle._id);
+      const scheduleQuery = {
+        vehicle: { $in: vehicleIds },
+        status: 'Active'
+      };
+      if (scheduleId) scheduleQuery._id = scheduleId;
+      if (travelDate) {
+        const date = new Date(travelDate);
+        if (Number.isNaN(date.getTime())) {
+          if (scheduleId) {
+            return res.status(400).json({ success: false, message: 'Invalid Car schedule travel date' });
+          }
+        } else {
+          const startOfDay = new Date(date);
+          startOfDay.setHours(0, 0, 0, 0);
+          const endOfDay = new Date(date);
+          endOfDay.setHours(23, 59, 59, 999);
+          scheduleQuery.travelDate = { $gte: startOfDay, $lte: endOfDay };
+        }
+      } else if (query.vehicleType === 'Car') {
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        scheduleQuery.travelDate = { $gte: startOfToday };
+      }
+
+      const schedules = vehicleIds.length
+        ? await Schedule.find(scheduleQuery).sort({ travelDate: 1, createdAt: 1 }).lean()
+        : [];
+      const scheduleByVehicle = new Map();
+
+      for (const schedule of schedules) {
+        const vehicle = vehicles.find(candidate => String(candidate._id) === String(schedule.vehicle));
+        if (!vehicle || scheduleByVehicle.has(String(schedule.vehicle))) continue;
+        if (scheduleId) {
+          const assignedDriverId = vehicle.assignedDriver?._id || vehicle.assignedDriver;
+          const scheduleDriverId = schedule.driver?._id || schedule.driver;
+          const activeScheduleDriver = await Driver.findOne({
+            _id: scheduleDriverId,
+            driverStatus: { $in: ['Active', 'Approved'] }
+          }).select('_id').lean();
+          if (
+            !activeScheduleDriver ||
+            (assignedDriverId && String(assignedDriverId) !== String(scheduleDriverId)) ||
+            (vehicle.assignedDriver && !['Active', 'Approved'].includes(vehicle.assignedDriver.driverStatus))
+          ) continue;
+        }
+
+        let routeMatches = true;
+        if (from || to) {
+          if (scheduleId) {
+            routeMatches = normalizeLocation(schedule.origin) === normalizeLocation(from)
+              && normalizeLocation(schedule.destination) === normalizeLocation(to);
+          } else if (
+            vehicle.vehicleType !== 'Car' &&
+            Array.isArray(vehicle.route?.stops) &&
+            vehicle.route.stops.length > 0
+          ) {
+            routeMatches = isRouteSegmentWithin(
+              vehicle.route,
+              schedule.origin,
+              schedule.destination,
+              from || schedule.origin,
+              to || schedule.destination
+            );
+          } else {
+            const scheduleOrigin = normalizeLocation(schedule.origin);
+            const scheduleDestination = normalizeLocation(schedule.destination);
+            const requestedOrigin = normalizeLocation(from);
+            const requestedDestination = normalizeLocation(to);
+            routeMatches = (!requestedOrigin
+              || scheduleOrigin.includes(requestedOrigin)
+              || requestedOrigin.includes(scheduleOrigin))
+              && (!requestedDestination
+                || scheduleDestination.includes(requestedDestination)
+                || requestedDestination.includes(scheduleDestination));
+          }
+        }
+
+        if (routeMatches) {
+          scheduleByVehicle.set(String(schedule.vehicle), {
+            ...schedule,
+            departureTime: normalizeScheduleTime(schedule.departureTime),
+            arrivalTime: normalizeScheduleTime(schedule.arrivalTime)
+          });
+        }
+      }
+
+      const formattedVehicles = vehicles.map(vehicle => ({
+        ...formatVehicle(vehicle, req),
+        schedule: scheduleByVehicle.get(String(vehicle._id)) || null
+      }));
+
+      return res.json({
+        success: true,
+        count: formattedVehicles.length,
+        data: formattedVehicles
+      });
+    }
+
+    // Vehicles without schedule records remain visible; scheduled buses require an active schedule.
+    const scheduleAwareVehicles = vehicles.filter(vehicle => vehicle.vehicleType === 'Bus');
+    const vehicleIds = scheduleAwareVehicles.map(vehicle => vehicle._id);
+    const scheduledVehicleIds = await Schedule.distinct('vehicle', { vehicle: { $in: vehicleIds } });
+    const activeScheduledVehicleIds = await Schedule.distinct('vehicle', {
+      vehicle: { $in: vehicleIds },
+      status: 'Active'
+    });
+    const scheduledIds = new Set(scheduledVehicleIds.map(id => String(id)));
+    const activeScheduledIds = new Set(activeScheduledVehicleIds.map(id => String(id)));
+    const filtered = vehicles.filter(vehicle => (
+      !scheduledIds.has(String(vehicle._id)) || activeScheduledIds.has(String(vehicle._id))
+    ));
+    let routeFiltered = filtered;
+    if (from || to) {
+      routeFiltered = filtered.filter((v) => {
+        const originSearch = (from || '').toLowerCase().trim();
+        const destSearch = (to || '').toLowerCase().trim();
+
+        const allOrigins = [
+          v.route?.origin,
+          ...(v.route?.boardingPoints || []),
+          v.pickupDropDetails?.pickupLocation,
+          v.hireDetails?.pickup
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        const allDestinations = [
+          v.route?.destination,
+          ...(v.route?.droppingPoints || []),
+          v.pickupDropDetails?.dropLocation,
+          v.hireDetails?.destination
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        const originMatch = !originSearch || allOrigins.includes(originSearch);
+        const destMatch = !destSearch || allDestinations.includes(destSearch);
+
+        return originMatch && destMatch;
+      });
+    }
+
+    const formattedVehicles = routeFiltered.map(v => formatVehicle(v, req));
+
+    res.json({
+      success: true,
+      count: formattedVehicles.length,
+      data: formattedVehicles
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get single vehicle details + booked seats if bus (date-specific)
+// @route   GET /api/vehicles/:id?travelDate=YYYY-MM-DD
+// @access  Public
+exports.getVehicleById = async (req, res, next) => {
+  try {
+    const vehicle = await Vehicle.findById(req.params.id).populate('assignedDriver');
+
+    if (!vehicle) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vehicle not found'
+      });
+    }
+
+    if (vehicle.vehicleStatus !== 'Active') {
+      return res.status(404).json({
+        success: false,
+        message: 'Vehicle is currently unavailable or inactive'
+      });
+    }
+
+    // If bus, get booked seats ONLY for the requested travel date (date-specific)
+    let bookedSeats = [];
+    if (vehicle.vehicleType === 'Bus') {
+      // Parse travelDate from query param; default to today if not provided
+      const rawDate = req.query.travelDate;
+      const targetDate = rawDate ? new Date(rawDate) : new Date();
+
+      // Day-boundary range so time component doesn't matter
+      const startOfDay = new Date(targetDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(targetDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const activeBookings = await Booking.find({
+        vehicle: vehicle._id,
+        travelDate: { $gte: startOfDay, $lte: endOfDay },
+        bookingStatus: {
+          $in: ['Confirmed', 'Pending', 'Pending Driver Confirmation', 'Awaiting Cash Collection', 'Ongoing']
+        }
+      });
+
+      activeBookings.forEach((b) => {
+        if (b.busSeatNumbers && b.busSeatNumbers.length > 0) {
+          b.busSeatNumbers.forEach((s) => bookedSeats.push(s));
+        }
+      });
+      bookedSeats = Array.from(new Set(bookedSeats));
+    }
+
+    const formattedVehicle = formatVehicle(vehicle, req);
+
+    res.json({
+      success: true,
+      data: {
+        ...formattedVehicle,
+        bookedSeats
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
