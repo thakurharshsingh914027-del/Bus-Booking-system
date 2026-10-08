@@ -113,11 +113,11 @@ const seedDemoData = async () => {
 
     // 3. Create Buses
     const busesData = [
-      { num: 'BA 1 KHA 1001', model: 'Tata Bus', cap: 40, origin: 'Kathmandu', destination: 'Pokhara', driverName: 'Rajesh Thapa' },
-      { num: 'BA 1 KHA 1002', model: 'Ashok Leyland', cap: 45, origin: 'Pokhara', destination: 'Kathmandu', driverName: 'Bikash Gurung' },
-      { num: 'BA 1 KHA 1003', model: 'Tata Starbus', cap: 40, origin: 'Kathmandu', destination: 'Birgunj', driverName: 'Dipak Shrestha' },
-      { num: 'BA 1 KHA 1004', model: 'Ashok Leyland', cap: 45, origin: 'Kathmandu', destination: 'Nepalgunj', driverName: 'Sanjay Karki' },
-      { num: 'BA 1 KHA 1005', model: 'Tata Bus', cap: 35, origin: 'Kathmandu', destination: 'Janakpur', driverName: 'Manoj Rai' }
+      { num: 'BA 1 KHA 1001', model: 'Tata Bus', cap: 40, origin: 'Kathmandu', destination: 'Pokhara', driverName: 'Rajesh Thapa', images: ['https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=800&q=80'] },
+      { num: 'BA 1 KHA 1002', model: 'Ashok Leyland', cap: 45, origin: 'Pokhara', destination: 'Kathmandu', driverName: 'Bikash Gurung', images: ['https://images.unsplash.com/photo-1570125909232-eb263c188f7e?auto=format&fit=crop&w=800&q=80'] },
+      { num: 'BA 1 KHA 1003', model: 'Tata Starbus', cap: 40, origin: 'Kathmandu', destination: 'Birgunj', driverName: 'Dipak Shrestha', images: ['https://images.unsplash.com/photo-1464219789935-c2d9d9aba644?auto=format&fit=crop&w=800&q=80'] },
+      { num: 'BA 1 KHA 1004', model: 'Ashok Leyland', cap: 45, origin: 'Kathmandu', destination: 'Nepalgunj', driverName: 'Sanjay Karki', images: ['https://images.unsplash.com/photo-1532939163844-547f958e91b4?auto=format&fit=crop&w=800&q=80'] },
+      { num: 'BA 1 KHA 1005', model: 'Tata Bus', cap: 35, origin: 'Kathmandu', destination: 'Janakpur', driverName: 'Manoj Rai', images: ['https://images.unsplash.com/photo-1511200155252-736021a00a16?auto=format&fit=crop&w=800&q=80'] }
     ];
 
     let busesCreated = 0;
@@ -136,6 +136,7 @@ const seedDemoData = async () => {
           ownerMobileNumber: '9800000001',
           assignedDriver: driverId,
           vehicleStatus: 'Active',
+          vehicleImages: b.images,
           route: { origin: b.origin, destination: b.destination, stops: [] },
           busDetails: {
             busType: 'Standard',
@@ -148,6 +149,10 @@ const seedDemoData = async () => {
         if (driverId) {
           await Driver.findByIdAndUpdate(driverId, { assignedVehicle: vehicle._id });
         }
+      } else if (!vehicle.vehicleImages || vehicle.vehicleImages.length === 0) {
+        // Update existing bus if it doesn't have photos
+        vehicle.vehicleImages = b.images;
+        await vehicle.save();
       }
     }
 

@@ -25,7 +25,7 @@ export const getFullImageUrl = (url, type = 'Bus') => {
   let cleanUrl = url.trim();
 
   // If http:// URL pointing to render backend, convert to https:// (Android blocks http:// cleartext)
-  if (cleanUrl.startsWith('http://bus-ev-sewa-car-booking.onrender.com')) {
+  if (cleanUrl.startsWith('http://bus-booking-system-j58c.onrender.com')) {
     cleanUrl = cleanUrl.replace('http://', 'https://');
   }
 

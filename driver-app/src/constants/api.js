@@ -37,25 +37,25 @@ export const sanitizeApiUrl = (rawUrl) => {
 };
 
 // Pure Production Render Cloud Backend API Endpoint (Client/Production Single Source of Truth)
-export const PRODUCTION_RENDER_URL = 'https://bus-ev-sewa-car-booking.onrender.com';
+export const PRODUCTION_RENDER_URL = 'https://bus-booking-system-j58c.onrender.com';
 
 /**
  * Resolves the primary production API Base URL
  */
 export const getDefaultBaseUrl = () => {
-  return 'https://bus-ev-sewa-car-booking.onrender.com/api';
+  return 'https://bus-booking-system-j58c.onrender.com/api';
 };
 
 /**
  * Single source of truth constant
  */
-export const DRIVER_API_BASE_URL = 'https://bus-ev-sewa-car-booking.onrender.com/api';
-export const API_BASE_URL = 'https://bus-ev-sewa-car-booking.onrender.com/api';
+export const DRIVER_API_BASE_URL = 'https://bus-booking-system-j58c.onrender.com/api';
+export const API_BASE_URL = 'https://bus-booking-system-j58c.onrender.com/api';
 
 /**
  * Client Release APK candidate endpoints (Strictly ONLY Render Production API)
  */
-export const CANDIDATE_URLS = ['https://bus-ev-sewa-car-booking.onrender.com/api'];
+export const CANDIDATE_URLS = ['https://bus-booking-system-j58c.onrender.com/api'];
 
 export const ENDPOINTS = {
   // Auth

@@ -13,7 +13,7 @@ import { Platform } from 'react-native';
  */
 
 // 1. Production / HTTPS Public Tunnel URL (Render Live Backend):
-export const BACKEND_TUNNEL_URL = 'https://bus-ev-sewa-car-booking.onrender.com';
+export const BACKEND_TUNNEL_URL = 'https://bus-booking-system-j58c.onrender.com';
 
 // 2. Computer's LAN IP address when phone and PC are on the same Wi-Fi:
 export const BACKEND_LAN_URL = 'http://192.168.1.2:5000';
