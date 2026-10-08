@@ -10,7 +10,7 @@ export const getImageUrl = (url, fallback = 'https://images.unsplash.com/photo-1
   if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:') || url.startsWith('data:')) {
     return url;
   }
-  const backendBase = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://bus-ev-sewa-car-booking.onrender.com' : 'http://localhost:5000');
+  const backendBase = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://bus-booking-system-j58c.onrender.com' : 'http://localhost:5000');
   const cleanBase = backendBase.replace(/\/+$/, '').replace(/\/api$/, '');
   return `${cleanBase}${url.startsWith('/') ? '' : '/'}${url}`;
 };

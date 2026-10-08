@@ -1,4 +1,4 @@
-const PRODUCTION_URL = 'https://bus-ev-sewa-car-booking.onrender.com';
+const PRODUCTION_URL = 'https://bus-booking-system-j58c.onrender.com';
 
 const getBaseUrl = () => {
   // If we're running locally, we might want to point to local backend

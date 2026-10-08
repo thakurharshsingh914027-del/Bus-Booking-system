@@ -14,6 +14,23 @@ const seedDemoData = async () => {
     await mongoose.connect(mongoUri);
     console.log('Connected to MongoDB for demo data seeding...');
 
+    // 0. Create Admin
+    let adminCreated = false;
+    let admin = await User.findOne({ email: 'admin@busbooking.com' });
+    if (!admin) {
+      await User.create({
+        name: 'Super Admin',
+        email: 'admin@busbooking.com',
+        phone: '9800000000',
+        password: 'Admin@123',
+        role: 'admin',
+        status: 'Active'
+      });
+      adminCreated = true;
+    } else {
+      console.log('Admin already exists');
+    }
+
     // 1. Create Customers
     const customersData = [
       { name: 'Aarav Sharma', email: 'demo.user1@example.com', phone: '9841000001' },
@@ -174,6 +191,7 @@ const seedDemoData = async () => {
     }
 
     console.log('\n--- SEEDING COMPLETE ---');
+    console.log(`Admin created: ${adminCreated}`);
     console.log(`Customers created: ${customersCreated}`);
     console.log(`Drivers created: ${driversCreated}`);
     console.log(`Buses created: ${busesCreated}`);

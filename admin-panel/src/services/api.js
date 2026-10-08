@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Live Production / HTTPS Public Tunnel URL (Render Live Backend):
-export const BACKEND_TUNNEL_URL = 'https://bus-ev-sewa-car-booking.onrender.com/api';
+export const BACKEND_TUNNEL_URL = 'https://bus-booking-system-j58c.onrender.com/api';
 
 // Local Development URL:
 export const LOCAL_DEV_URL = 'http://localhost:5006/api';
@@ -10,7 +10,7 @@ export const LOCAL_DEV_URL = 'http://localhost:5006/api';
  * Computes active API Base URL with prioritized resolution:
  * 1. Custom URL saved in localStorage ('custom_server_url')
  * 2. Vite Environment Variable ('VITE_API_URL')
- * 3. Live Backend Tunnel URL ('https://bus-ev-sewa-car-booking.onrender.com/api')
+ * 3. Live Backend Tunnel URL ('https://bus-booking-system-j58c.onrender.com/api')
  * 4. Localhost Fallback ('http://localhost:5000/api')
  */
 export const getApiBaseUrl = () => {

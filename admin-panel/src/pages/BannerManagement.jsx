@@ -16,7 +16,7 @@ import {
   Layers
 } from 'lucide-react';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://bus-ev-sewa-car-booking.onrender.com/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://bus-booking-system-j58c.onrender.com/api';
 const SERVER_URL = API_BASE_URL.replace(/\/api\/?$/, '');
 
 const getFullImageUrl = (url) => {
